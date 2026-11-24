@@ -42,19 +42,17 @@ void EC_AIRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         highHighPass[ch].reset();
         midShelf[ch].reset();
         highShelf[ch].reset();
-        *midHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 6000.0);
-        *highHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 12000.0);
+        // Fresh Air Original: Mid 3.5k / High 7k
+        *midHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 3500.0);
+        *highHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 7000.0);
         *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 6000.0, 0.7f, 1.0f);
         *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 12000.0, 0.7f, 1.0f);
     }
-    // Fuerza a que updateFilters calcule la primera vez
     lastMidAir = -1.0f;
     lastHighAir = -1.0f;
     updateFilters(sampleRate);
 }
 
-// CORREGIDO: Ahora solo se recalcula cuando mueves Mid Air o High Air
-// Antes lo hacias en cada processBlock y eso tronaba en Monterey
 void EC_AIRAudioProcessor::updateFilters(double sampleRate)
 {
     float midAmount = midAirParam != nullptr ? midAirParam->load() : 0.0f;
@@ -63,10 +61,14 @@ void EC_AIRAudioProcessor::updateFilters(double sampleRate)
         return;
     lastMidAir = midAmount;
     lastHighAir = highAmount;
+    // ARREGLO FRESH AIR: El High Shelf SI sube con el knob, por eso se escucha el brillo
+    // Antes lo tenias en 1.0f (0dB) por eso no hacia nada
+    float midGain = juce::Decibels::decibelsToGain(midAmount * 0.8f); // Mid: hasta +9.6dB
+    float highGain = juce::Decibels::decibelsToGain(highAmount * 1.2f); // High: hasta +14.4dB EXAGERADO
     for (int ch = 0; ch < 2; ++ch)
     {
-        *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 6000.0, 0.7f, juce::Decibels::decibelsToGain(midAmount * 0.5f));
-        *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 12000.0, 0.7f, juce::Decibels::decibelsToGain(highAmount * 0.5f));
+        *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 5500.0, 0.6f, midGain);
+        *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 11000.0, 0.6f, highGain);
     }
 }
 
@@ -82,10 +84,22 @@ bool EC_AIRAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
     return true;
 }
 
+// EXCITADOR FRESH AIR - Exagerado
 float EC_AIRAudioProcessor::excite(float x, float amount)
 {
-    float driven = x * (1.0f + amount * 0.5f);
-    return std::tanh(driven);
+    if (amount <= 0.001f)
+        return 0.0f;
+    // Drive bien fuerte para que genere armonicos aunque la señal sea chiquita
+    float driven = x * (1.0f + amount * 6.0f);
+    float saturated = std::tanh(driven);
+    // Armonico par = brillo dulce, no distorsion fea
+    float even = saturated * saturated * 0.6f;
+    if (saturated < 0.0f)
+        even = -even;
+    // Armonico impar = presencia
+    float odd = saturated * 0.8f;
+    float exciter = (odd + even * 0.5f) - x * 0.15f;
+    return exciter * amount;
 }
 
 void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -104,7 +118,9 @@ void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     float mix = mixParam != nullptr ? (mixParam->load() / 100.0f) : 0.65f;
     float outGain = outputParam != nullptr ? juce::Decibels::decibelsToGain(outputParam->load()) : 1.0f;
 
-    // CORREGIDO: Solo actualiza si cambio el knob, no en cada buffer
+    float midNorm = juce::jlimit(0.0f, 1.0f, midAmount / 12.0f);
+    float highNorm = juce::jlimit(0.0f, 1.0f, highAmount / 12.0f);
+
     updateFilters(getSampleRate());
 
     for (int ch = 0; ch < totalNumInputChannels; ++ch)
@@ -118,13 +134,24 @@ void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         for (int s = 0; s < buffer.getNumSamples(); ++s)
         {
             float dry = data[s];
-            // CORREGIDO: Primero HighPass, luego Shelf sobre esa banda, no sobre el seco
-            float midBand = midSh.processSample(midHP.processSample(dry));
-            float highBand = highSh.processSample(highHP.processSample(dry));
-            float excited = excite(midBand, midAmount * 0.15f) + excite(highBand, highAmount * 0.15f);
-            // La banda de aire es lo que agregan los Shelf por encima del seco
-            float air = (midBand + highBand) * 0.2f;
-            float wet = dry + excited * 0.3f + air;
+
+            // 1. Saca solo agudos
+            float midBand = midHP.processSample(dry);
+            float highBand = highHP.processSample(dry);
+
+            // 2. Excita - High con el doble de ganancia porque viene mas bajito
+            float midAir = excite(midBand * 2.0f, midNorm);
+            float highAir = excite(highBand * 6.0f, highNorm);
+
+            // 3. TRUCO FRESH AIR: Ademas del excitador, le suma el Shelf con boost
+            // Por eso el High si se escucha aunque la voz no tenga mucho arriba
+            float midBoost = midSh.processSample(dry) - dry;
+            float highBoost = highSh.processSample(dry) - dry;
+
+            // 4. Mezcla todo: Excitador + Boost = Brillo exagerado igual al original
+            float air = midAir * 1.2f + highAir * 2.5f + midBoost * 0.8f + highBoost * 1.5f;
+
+            float wet = dry + air;
             float mixed = dry * (1.0f - mix) + wet * mix;
             data[s] = juce::jlimit(-1.0f, 1.0f, mixed * outGain);
         }
