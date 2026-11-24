@@ -31,7 +31,6 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
-    // Estos son los que tu .cpp estaba buscando y no existian en el .h
     std::array<juce::dsp::IIR::Filter<float>, 2> midHighPass;
     std::array<juce::dsp::IIR::Filter<float>, 2> highHighPass;
     std::array<juce::dsp::IIR::Filter<float>, 2> midShelf;
