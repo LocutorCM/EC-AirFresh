@@ -38,10 +38,35 @@ void EC_AIRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         highHighPass[ch].prepare(spec);
         midShelf[ch].prepare(spec);
         highShelf[ch].prepare(spec);
+        midHighPass[ch].reset();
+        highHighPass[ch].reset();
+        midShelf[ch].reset();
+        highShelf[ch].reset();
         *midHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 6000.0);
         *highHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 12000.0);
         *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 6000.0, 0.7f, 1.0f);
         *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 12000.0, 0.7f, 1.0f);
+    }
+    // Fuerza a que updateFilters calcule la primera vez
+    lastMidAir = -1.0f;
+    lastHighAir = -1.0f;
+    updateFilters(sampleRate);
+}
+
+// CORREGIDO: Ahora solo se recalcula cuando mueves Mid Air o High Air
+// Antes lo hacias en cada processBlock y eso tronaba en Monterey
+void EC_AIRAudioProcessor::updateFilters(double sampleRate)
+{
+    float midAmount = midAirParam != nullptr ? midAirParam->load() : 0.0f;
+    float highAmount = highAirParam != nullptr ? highAirParam->load() : 0.0f;
+    if (std::abs(midAmount - lastMidAir) < 0.001f && std::abs(highAmount - lastHighAir) < 0.001f)
+        return;
+    lastMidAir = midAmount;
+    lastHighAir = highAmount;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 6000.0, 0.7f, juce::Decibels::decibelsToGain(midAmount * 0.5f));
+        *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 12000.0, 0.7f, juce::Decibels::decibelsToGain(highAmount * 0.5f));
     }
 }
 
@@ -79,27 +104,29 @@ void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     float mix = mixParam != nullptr ? (mixParam->load() / 100.0f) : 0.65f;
     float outGain = outputParam != nullptr ? juce::Decibels::decibelsToGain(outputParam->load()) : 1.0f;
 
-    double sr = getSampleRate();
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sr, 6000.0, 0.7f, juce::Decibels::decibelsToGain(midAmount * 0.5f));
-        *highShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sr, 12000.0, 0.7f, juce::Decibels::decibelsToGain(highAmount * 0.5f));
-    }
+    // CORREGIDO: Solo actualiza si cambio el knob, no en cada buffer
+    updateFilters(getSampleRate());
 
     for (int ch = 0; ch < totalNumInputChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(ch);
         int chIdx = juce::jmin(ch, 1);
+        auto& midHP = midHighPass[chIdx];
+        auto& highHP = highHighPass[chIdx];
+        auto& midSh = midShelf[chIdx];
+        auto& highSh = highShelf[chIdx];
         for (int s = 0; s < buffer.getNumSamples(); ++s)
         {
             float dry = data[s];
-            float mid = midHighPass[chIdx].processSample(dry);
-            float high = highHighPass[chIdx].processSample(dry);
-            float excited = excite(mid, midAmount * 0.15f) + excite(high, highAmount * 0.15f);
-            float air = midShelf[chIdx].processSample(dry) + highShelf[chIdx].processSample(dry) - dry * 2.0f;
-            float wet = dry + excited * 0.3f + air * 0.2f;
+            // CORREGIDO: Primero HighPass, luego Shelf sobre esa banda, no sobre el seco
+            float midBand = midSh.processSample(midHP.processSample(dry));
+            float highBand = highSh.processSample(highHP.processSample(dry));
+            float excited = excite(midBand, midAmount * 0.15f) + excite(highBand, highAmount * 0.15f);
+            // La banda de aire es lo que agregan los Shelf por encima del seco
+            float air = (midBand + highBand) * 0.2f;
+            float wet = dry + excited * 0.3f + air;
             float mixed = dry * (1.0f - mix) + wet * mix;
-            data[s] = mixed * outGain;
+            data[s] = juce::jlimit(-1.0f, 1.0f, mixed * outGain);
         }
     }
 }
