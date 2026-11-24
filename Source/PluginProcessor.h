@@ -31,6 +31,10 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
+    // CORREGIDO: Esto es lo que faltaba para que no se caiga al abrir en Monterey
+    // Antes recreabas los coeficientes en processBlock, ahora solo cuando cambia el knob
+    void updateFilters(double sampleRate);
+
     std::array<juce::dsp::IIR::Filter<float>, 2> midHighPass;
     std::array<juce::dsp::IIR::Filter<float>, 2> highHighPass;
     std::array<juce::dsp::IIR::Filter<float>, 2> midShelf;
@@ -41,6 +45,10 @@ private:
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
     std::atomic<float>* powerParam = nullptr;
+
+    // CORREGIDO: Guardan el ultimo valor para no recalcular en cada bloque
+    float lastMidAir = -1.0f;
+    float lastHighAir = -1.0f;
 
     float excite(float x, float amount);
 
