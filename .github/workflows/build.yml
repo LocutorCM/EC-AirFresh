@@ -1,130 +1,64 @@
-name: Build
-
-concurrency:
-  group: build-macos
-  cancel-in-progress: true
-
+name: Build EC_AIR
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
-
 jobs:
-  build-macos:
+  build:
+    # Como lo pediste: 15-intel
     runs-on: macos-15-intel
-    
+
+    env:
+      # ESTO ES LO QUE HACE QUE JALE EN MONTEREY
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      SDKROOT: macosx
+
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Fix JUCE - Use 8.0.8
-        run: |
-          if [ -d "JUCE/.git" ]; then
-            cd JUCE
-            git fetch --tags
-            git checkout 8.0.8
-            cd ..
-          elif [ -d "juce/.git" ]; then
-            cd juce
-            git fetch --tags
-            git checkout 8.0.8
-            cd ..
-          else
-            echo "Clonando JUCE 8.0.8 limpio"
-            rm -rf JUCE
-            git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
-          fi
-
-          # Verificar que el archivo NO esta roto por un parche anterior
-          echo "--- Verificando juce_Windowing_mac.mm ---"
-          grep -n "CGWindowListCreateImage\|windowNumber" JUCE/modules/juce_gui_basics/native/juce_Windowing_mac.mm | head -20
-          # Si aparece "nullptr [nsWindow" es que el parche malo lo rompio
-          if grep -q "nullptr \[nsWindow" JUCE/modules/juce_gui_basics/native/juce_Windowing_mac.mm; then
-            echo "ERROR: Archivo corrupto por parche anterior, restaurando..."
-            cd JUCE && git checkout -- modules/juce_gui_basics/native/juce_Windowing_mac.mm && cd ..
-          fi
-          echo "Archivo OK"
-
-          # NO parcheamos CGWindowListCreateImage.
-          # En JUCE 8.0.8 ya esta corregido para Xcode 16 / macOS 15.
-          # El parche anterior que lo cambiaba por 'nullptr' era el que rompia la compilacion.
-
-      - name: Show available Xcodes
+      - name: Show Xcode
         run: |
           xcodebuild -version
           xcrun --show-sdk-path
-          uname -m
 
-      - name: Configure CMake - macOS 15 Intel Only
-        env:
-          FETCHCONTENT_SOURCE_DIR_JUCE: ${{ github.workspace }}/JUCE
+      - name: Configure CMake
         run: |
-          cmake -B build \
+          cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
-            -DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/JUCE
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_SYSROOT=macosx \
+            -DCMAKE_CXX_FLAGS="-mmacosx-version-min=12.0" \
+            -DCMAKE_C_FLAGS="-mmacosx-version-min=12.0" \
+            -DCMAKE_EXE_LINKER_FLAGS="-mmacosx-version-min=12.0" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-mmacosx-version-min=12.0" \
+            -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # ===== LO NUEVO EMPIEZA AQUI - SOLO AGREGUE ESTO =====
-
-      - name: Create ZIP
+      - name: Check Compatibility
         run: |
-          mkdir -p dist-zip
-          cp -R build/EC_AIR_artefacts/Release/VST3/*.vst3 dist-zip/ 2>/dev/null || echo "No VST3"
-          cp -R build/EC_AIR_artefacts/Release/AU/*.component dist-zip/ 2>/dev/null || echo "No AU"
-          cp -R build/EC_AIR_artefacts/Release/Standalone/*.app dist-zip/ 2>/dev/null || echo "No Standalone"
-          ls -R dist-zip
-          cd dist-zip && zip -r ../EC-AIR-Plugins.zip . && cd ..
+          echo "=== Arquitecturas ==="
+          lipo -info "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR"
+          echo "=== Min macOS ==="
+          otool -l "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR" | grep -A 3 LC_BUILD_VERSION
+          vtool -show-build "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR" || true
 
-      - name: Create PKG Installer
+      - name: Package
         run: |
-          # Estructura EXACTA como debe quedar en tu Mac
-          mkdir -p staging/Library/Audio/Plug-Ins/VST3
-          mkdir -p staging/Library/Audio/Plug-Ins/Components
-          mkdir -p staging/Applications
+          mkdir -p pkg_stage
+          cp -R "build/EC_AIR_artefacts/Release/AU/EC_AIR.component" pkg_stage/
+          cp -R "build/EC_AIR_artefacts/Release/VST3/EC_AIR.vst3" pkg_stage/
+          cp -R "build/EC_AIR_artefacts/Release/Standalone/EC_AIR.app" pkg_stage/
+          cd pkg_stage && zip -r ../EC_AIR_macOS_12_Plus_Universal.zip . && cd ..
 
-          cp -R build/EC_AIR_artefacts/Release/VST3/*.vst3 staging/Library/Audio/Plug-Ins/VST3/ 2>/dev/null || echo "No VST3"
-          cp -R build/EC_AIR_artefacts/Release/AU/*.component staging/Library/Audio/Plug-Ins/Components/ 2>/dev/null || echo "No AU"
-          cp -R build/EC_AIR_artefacts/Release/Standalone/*.app staging/Applications/ 2>/dev/null || echo "No Standalone"
-
-          ls -R staging
-
-          # install-location / = respeta la estructura de staging
-          pkgbuild --root staging \
-                   --identifier com.ecaudio.airexciter \
-                   --version 1.0.0 \
-                   --install-location / \
-                   EC-AIR-Installer.pkg
-
-          ls -lh EC-AIR-Installer.pkg EC-AIR-Plugins.zip
-
-      - name: Upload Artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: EC-AIR-EXCITER-macOS-INTEL
-          path: |
-            build/EC_AIR_artefacts/Release/VST3/*.vst3
-            build/EC_AIR_artefacts/Release/AU/*.component
-            build/EC_AIR_artefacts/Release/Standalone/*.app
-          if-no-files-found: warn
-
-      - name: Upload PKG
-        uses: actions/upload-artifact@v4
-        with:
-          name: EC-AIR-Installer-pkg
-          path: EC-AIR-Installer.pkg
-          if-no-files-found: warn
-
-      - name: Upload ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: EC-AIR-Plugins-zip
-          path: EC-AIR-Plugins.zip
-          if-no-files-found: warn
+          name: EC_AIR_macOS_12_Plus_Universal
+          path: EC_AIR_macOS_12_Plus_Universal.zip
