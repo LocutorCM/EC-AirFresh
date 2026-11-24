@@ -7,7 +7,7 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -27,5 +27,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: EQ-ECaudio-macOS
+          name: EC-AIR-EXCITER-macOS-INTEL
           path: out/*.zip
