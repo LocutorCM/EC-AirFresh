@@ -1,14 +1,22 @@
 cmake_minimum_required(VERSION 3.22)
 project(EC_AIR VERSION 1.0.0)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+
+# IMPORTANTE: 10.15 minimo para JUCE 8.0.8 + Xcode 16
+# 10.13 rompe juceaide en macOS 15
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
+set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Architectures")
 
 include(FetchContent)
+
+# DEBE COINCIDIR con el build.yml: 8.0.8
+# Antes tenias 7.0.9 aqui y 8.0.8 en el workflow, por eso habia conflicto
 FetchContent_Declare(
   JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG 7.0.9
+  GIT_TAG 8.0.8
 )
 FetchContent_MakeAvailable(JUCE)
 
@@ -18,14 +26,14 @@ juce_add_plugin(EC_AIR
     COMPANY_EMAIL "info@ecaudio.com"
     PLUGIN_MANUFACTURER_CODE ECAu
     PLUGIN_CODE AiAr
-    FORMATS VST3 AU
+    FORMATS VST3 AU Standalone
     PRODUCT_NAME "EC AIR EXCITER"
     VERSION "1.0.0"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES "Fx" "Enhancement" "Exciter"
     AU_MAIN_TYPE "kAudioUnitType_Effect"
 )
