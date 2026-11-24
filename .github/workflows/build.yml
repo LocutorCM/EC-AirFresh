@@ -1,54 +1,31 @@
-name: Build
-
-concurrency:
-  group: build-macos
-  cancel-in-progress: true
+name: Build EC-AIR-EXCITER
 
 on:
   push:
-    branches: [ main ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-15-intel
-
+  macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (AU + VST3, universal arm64/x86_64)
+        run: cmake --build build --config Release -j 4
+
+      - name: EC-AIR-EXCITER-macOS-INTEL
+        run: |
+          mkdir -p dist out
+          find build -maxdepth 6 \( -name "*.vst3" -o -name "*.component" \) -exec cp -R {} dist/ \;
+          for f in dist/*; do codesign --force --deep -s - "$f"; done
+          cd dist
+          for f in *; do ditto -c -k --keepParent "$f" "../out/$f.zip"; done
+
+      - uses: actions/upload-artifact@v4
         with:
-          submodules: recursive
-
-      - name: Update JUCE to 8.0.8 - macOS 15 fix
-        run: |
-          cd JUCE
-          git fetch --tags
-          git checkout 8.0.8
-          git log --oneline -1
-          cd ..
-
-      - name: Show available Xcodes
-        run: |
-          xcodebuild -version
-          xcrun --show-sdk-path
-          uname -m
-
-      - name: Configure CMake - macOS 15 Intel Only
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64"
-
-      - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: EC-AIR-EXCITER-macOS-INTEL
-          path: |
-            build/EC_AIR_artefacts/Release/VST3/*.vst3
-            build/EC_AIR_artefacts/Release/AU/*.component
-            build/EC_AIR_artefacts/Release/Standalone/*.app
-          if-no-files-found: warn
+          name: EQ-ECaudio-macOS
+          path: out/*.zip
