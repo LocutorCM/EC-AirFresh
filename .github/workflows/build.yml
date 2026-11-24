@@ -18,110 +18,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Fix JUCE - Use 8.0.8 and Patch CGWindowListCreateImage correctly
-        run: |
-          if [ -d "JUCE/.git" ]; then
-            cd JUCE
-            git fetch --tags
-            git checkout 8.0.8
-            cd ..
-          elif [ -d "juce/.git" ]; then
-            cd juce
-            git fetch --tags
-            git checkout 8.0.8
-            cd ..
-          else
-            echo "Clonando JUCE 8.0.8 limpio..."
-            rm -rf JUCE
-            git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
-          fi
-
-          echo "Parchando juce_Windowing_mac.mm con parentesis balanceados..."
-          find . -name "juce_Windowing_mac.mm" -print -exec python3 -c "
-          import sys, pathlib
-          p = pathlib.Path(sys.argv[1])
-          txt = p.read_text()
-          needle = 'CGWindowListCreateImage'
-          count = 0
-          while needle in txt:
-              idx = txt.find(needle)
-              # Busca el '(' de apertura
-              paren = txt.find('(', idx)
-              if paren == -1:
-                  break
-              # Cuenta parentesis hasta encontrar el cierre que corresponde
-              depth = 0
-              i = paren
-              while i < len(txt):
-                  if txt[i] == '(':
-                      depth += 1
-                  elif txt[i] == ')':
-                      depth -= 1
-                      if depth == 0:
-                          break
-                  i += 1
-              if depth != 0:
-                  print('No se pudo balancear parentesis en', p)
-                  break
-              # Reemplaza TODA la llamada CGWindowListCreateImage(...) por nullptr
-              txt = txt[:idx] + 'nullptr' + txt[i+1:]
-              count += 1
-          print(f'Parcheado {p}: {count} reemplazos completos')
-          if count > 0:
-              p.write_text(txt)
-              # Verifica que no quede nada roto
-              assert 'CGWindowListCreateImage' not in p.read_text(), 'Quedo CGWindowListCreateImage sin parchear'
-              assert 'nullptr [nsWindow' not in p.read_text(), 'Quedo nullptr [nsWindow roto'
-          " {} \;
-
-      - name: Show available Xcodes
-        run: |
-          xcodebuild -version
-          xcrun --show-sdk-path
-          uname -m
-
-      - name: Configure CMake - macOS 15 Intel Only
-        env:
-          FETCHCONTENT_SOURCE_DIR_JUCE: ${{ github.workspace }}/JUCE
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
-            -DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/JUCE
-
-      - name: Build
-        run: cmake --build build --config Release --parallel
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: EC-AIR-EXCITER-macOS-INTEL
-          path: |
-            build/EC_AIR_artefacts/Release/VST3/*.vst3
-            build/EC_AIR_artefacts/Release/AU/*.component
-            build/EC_AIR_artefacts/Release/Standalone/*.app
-          if-no-files-found: warnname: Build
-
-concurrency:
-  group: build-macos
-  cancel-in-progress: true
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build-macos:
-    runs-on: macos-15-intel
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
       - name: Fix JUCE - Use 8.0.8 and Patch CGWindowListCreateImage
         run: |
           if [ -d "JUCE/.git" ]; then
@@ -135,20 +31,44 @@ jobs:
             git checkout 8.0.8
             cd ..
           else
-            echo "Clonando JUCE 8.0.8 limpio..."
+            echo "Clonando JUCE 8.0.8 limpio"
             rm -rf JUCE
             git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
           fi
 
-          find . -name "juce_Windowing_mac.mm" -print -exec python3 -c "
-          import sys, re, pathlib
-          p = pathlib.Path(sys.argv[1])
-          txt = p.read_text()
-          new_txt, n = re.subn(r'CGWindowListCreateImage\s*\([^;]*?\)', 'nullptr', txt, flags=re.DOTALL)
-          print(f'Parcheado {p}: {n} reemplazos')
-          if n > 0:
-              p.write_text(new_txt)
-          " {} \;
+          cat > /tmp/patch.py << 'PYEOF'
+          import pathlib
+
+          for p in pathlib.Path('.').rglob('juce_Windowing_mac.mm'):
+              txt = p.read_text()
+              needle = 'CGWindowListCreateImage'
+              count = 0
+              while needle in txt:
+                  idx = txt.find(needle)
+                  paren = txt.find('(', idx)
+                  if paren == -1:
+                      break
+                  depth = 0
+                  i = paren
+                  while i < len(txt):
+                      if txt[i] == '(':
+                          depth += 1
+                      elif txt[i] == ')':
+                          depth -= 1
+                          if depth == 0:
+                              break
+                      i += 1
+                  if depth != 0:
+                      print('No se pudo balancear parentesis')
+                      break
+                  txt = txt[:idx] + 'nullptr' + txt[i + 1:]
+                  count += 1
+              print(f'Parcheado {p}: {count} reemplazos')
+              if count > 0:
+                  p.write_text(txt)
+          PYEOF
+
+          python3 /tmp/patch.py
 
       - name: Show available Xcodes
         run: |
