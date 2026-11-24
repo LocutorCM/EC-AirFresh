@@ -4,60 +4,60 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-  
+
 jobs:
-  build:
-    # Como lo pediste: 15-intel
+  build-macos:
     runs-on: macos-15-intel
 
-    env:
-      # ESTO ES LO QUE HACE QUE JALE EN MONTEREY
-      MACOSX_DEPLOYMENT_TARGET: "12.0"
-      SDKROOT: macosx
-
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Show Xcode
-        run: |
-          xcodebuild -version
-          xcrun --show-sdk-path
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Configure CMake
         run: |
-          cmake -B build -S . \
-            -DCMAKE_BUILD_TYPE=Release \
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
             -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-            -DCMAKE_OSX_SYSROOT=macosx \
-            -DCMAKE_CXX_FLAGS="-mmacosx-version-min=12.0" \
-            -DCMAKE_C_FLAGS="-mmacosx-version-min=12.0" \
-            -DCMAKE_EXE_LINKER_FLAGS="-mmacosx-version-min=12.0" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-mmacosx-version-min=12.0" \
-            -DJUCE_COPY_PLUGIN_AFTER_BUILD=OFF
+            -DCMAKE_INSTALL_PREFIX=install
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release -j 4
 
-      - name: Check Compatibility
+      - name: Find AU and check
         run: |
-          echo "=== Arquitecturas ==="
-          lipo -info "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR"
-          echo "=== Min macOS ==="
-          otool -l "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR" | grep -A 3 LC_BUILD_VERSION
-          vtool -show-build "build/EC_AIR_artefacts/Release/AU/EC_AIR.component/Contents/MacOS/EC_AIR" || true
+          echo "=== Buscando AU ==="
+          find build -name "*.component" -type d
+          AU_PATH=$(find build -name "EC_AIR.component" -type d | head -n 1)
+          echo "AU_PATH=$AU_PATH"
+          echo "AU_PATH=$AU_PATH" >> $GITHUB_ENV
+          if [ -z "$AU_PATH" ]; then
+            echo "ERROR: No se encontro EC_AIR.component"
+            ls -R build/EC_AIR_artefacts || true
+            exit 1
+          fi
+          ls -lh "$AU_PATH/Contents/MacOS/"
+          lipo -info "$AU_PATH/Contents/MacOS/EC_AIR"
+          echo "=== Deployment Target ==="
+          otool -l "$AU_PATH/Contents/MacOS/EC_AIR" | grep -A 2 LC_BUILD_VERSION || otool -l "$AU_PATH/Contents/MacOS/EC_AIR" | grep -A 2 LC_VERSION_MIN_MACOSX
 
       - name: Package
         run: |
-          mkdir -p pkg_stage
-          cp -R "build/EC_AIR_artefacts/Release/AU/EC_AIR.component" pkg_stage/
-          cp -R "build/EC_AIR_artefacts/Release/VST3/EC_AIR.vst3" pkg_stage/
-          cp -R "build/EC_AIR_artefacts/Release/Standalone/EC_AIR.app" pkg_stage/
-          cd pkg_stage && zip -r ../EC_AIR_macOS_12_Plus_Universal.zip . && cd ..
+          mkdir -p package
+          cp -R "$AU_PATH" package/
+          # VST3 si existe
+          VST3_PATH=$(find build -name "EC_AIR.vst3" -type d | head -n 1)
+          if [ -n "$VST3_PATH" ]; then
+            cp -R "$VST3_PATH" package/
+          fi
+          # Standalone si existe
+          APP_PATH=$(find build -name "EC_AIR.app" -type d | head -n 1)
+          if [ -n "$APP_PATH" ]; then
+            cp -R "$APP_PATH" package/
+          fi
+          ls -lh package/
+          cd package && zip -r ../EC_AIR_macOS_12_Plus_Universal.zip . && cd ..
 
-      - name: Upload
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: EC_AIR_macOS_12_Plus_Universal
