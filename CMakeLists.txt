@@ -4,10 +4,18 @@ project(EC_AIR VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# IMPORTANTE: 10.15 minimo para JUCE 8.0.8 + Xcode 16
-# 10.13 rompe juceaide en macOS 15
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
-set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Architectures")
+# MODIFICADO: Monterey (12.0) en adelante, Universal
+# Antes tenias 10.15 + solo x86_64, por eso en macos-15-intel te quedaba ligado a 15.0
+# y en Monterey fallaba con OpenAComponent: -1
+set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version - Monterey en adelante")
+set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Architectures - Universal Binary")
+
+# OBLIGATORIO para macos-15-intel + Xcode 16: forzar min-version en compilador y linker
+# Si no pones esto, aunque pongas DEPLOYMENT_TARGET 12.0, Xcode te lo sube a 15.0
+if(APPLE)
+  add_compile_options(-mmacosx-version-min=12.0)
+  add_link_options(-mmacosx-version-min=12.0)
+endif()
 
 include(FetchContent)
 
