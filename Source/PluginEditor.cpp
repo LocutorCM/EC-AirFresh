@@ -1,231 +1,146 @@
+#include "PluginProcessor.h"
 #include "PluginEditor.h"
 
 EC_AIRAudioProcessorEditor::EC_AIRAudioProcessorEditor(EC_AIRAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
 {
-    setSize(800, 600);
-    setLookAndFeel(&look);
+    setSize(620, 340);
 
-    auto setupKnob = [this](juce::Slider& s, juce::Label& label, const char* text)
+    setupSlider(midAirSlider, midAirLabel, "MID AIR");
+    setupSlider(highAirSlider, highAirLabel, "HIGH AIR");
+    setupSlider(mixSlider, mixLabel, "MIX");
+    setupSlider(outputSlider, outputLabel, "OUTPUT");
+
+    midAirAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "midAir", midAirSlider);
+    highAirAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "highAir", highAirSlider);
+    mixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "mix", mixSlider);
+    outputAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "output", outputSlider);
+
+    powerButton.setButtonText("POWER");
+    powerButton.setClickingTogglesState(true);
+    powerButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff2ecc71));
+    powerButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff333333));
+    powerButton.setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+    powerButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible(powerButton);
+    powerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "power", powerButton);
+
+    auto setupPreset = [this](juce::TextButton& btn, const juce::String& name)
     {
-        s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        s.setLookAndFeel(&look);
-        addAndMakeVisible(s);
-        label.setText(text, juce::dontSendNotification);
-        label.setJustificationType(juce::Justification::centred);
-        label.setColour(juce::Label::textColourId, juce::Colour(0xff2a7ab5));
-        label.setFont(juce::FontOptions(22.0f, juce::Font::bold));
-        addAndMakeVisible(label);
+        btn.setButtonText(name);
+        btn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff222222));
+        btn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        addAndMakeVisible(btn);
     };
+    setupPreset(presetAirButton, "AIR");
+    setupPreset(presetVocalButton, "VOCAL");
+    setupPreset(presetMasterButton, "MASTER");
 
-    setupKnob(midAir, midLabel, "Mid Air");
-    setupKnob(highAir, highLabel, "High Air");
-    setupKnob(mix, mixLabel, "MIX");
-    setupKnob(output, outLabel, "OUTPUT");
+    presetAirButton.onClick = [this] { applyPreset(2.4f, 4.1f, 65.0f, -0.5f); };
+    presetVocalButton.onClick = [this] { applyPreset(3.5f, 5.0f, 55.0f, -1.0f); };
+    presetMasterButton.onClick = [this] { applyPreset(1.2f, 2.0f, 40.0f, -0.2f); };
 
-    midAttach = std::make_unique<Attach>(p.apvts, "midAir", midAir);
-    highAttach = std::make_unique<Attach>(p.apvts, "highAir", highAir);
-    mixAttach = std::make_unique<Attach>(p.apvts, "mix", mix);
-    outAttach = std::make_unique<Attach>(p.apvts, "output", output);
+    titleLabel.setText("EC AIR EXCITER", juce::dontSendNotification);
+    titleLabel.setFont(juce::Font(22.0f, juce::Font::bold));
+    titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+    titleLabel.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(titleLabel);
 
-    // POWER - si esta apagado, no suena el efecto
-    power.setLookAndFeel(&look);
-    power.setButtonText("");
-    addAndMakeVisible(power);
-    powerAttach = std::make_unique<ButtonAttach>(p.apvts, "power", power);
+    valueLabel.setText("", juce::dontSendNotification);
+    valueLabel.setFont(juce::Font(13.0f));
+    valueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffaaaaaa));
+    valueLabel.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(valueLabel);
 
-    // BYPASS - REAL: apaga POWER, y si lo vuelves a picar lo prende
-    bypass.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffeef6fb));
-    bypass.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff78909c));
-    bypass.setColour(juce::TextButton::textColourOnId, juce::Colour(0xffd32f2f));
-    bypass.setClickingTogglesState(true);
-    bypass.onClick = [this]()
-    {
-        auto* param = audioProcessor.apvts.getParameter("power");
-        if (param != nullptr)
-        {
-            // Si BYPASS esta ON -> power = 0, si esta OFF -> power = 1
-            float newPower = bypass.getToggleState() ? 0.0f : 1.0f;
-            param->setValueNotifyingHost(newPower);
-            // Sincroniza el switch de POWER con el boton
-            power.setToggleState(newPower > 0.5f, juce::dontSendNotification);
-        }
-    };
-    addAndMakeVisible(bypass);
-
-    // PRESET - REAL
-    presetBox.addItem("Warm & Airy", 1);
-    presetBox.addItem("Bright Vocals", 2);
-    presetBox.addItem("Master Sparkle", 3);
-    presetBox.addItem("Subtle Air", 4);
-    presetBox.setSelectedId(1, juce::dontSendNotification);
-    presetBox.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-    presetBox.setColour(juce::ComboBox::textColourId, juce::Colour(0xff78909c));
-    presetBox.onChange = [this]() { applyPreset(presetBox.getSelectedId()); };
-    addAndMakeVisible(presetBox);
-
-    auto setupValue = [this](juce::Label& l)
-    {
-        l.setJustificationType(juce::Justification::centred);
-        l.setColour(juce::Label::textColourId, juce::Colour(0xff2a7ab5));
-        l.setFont(juce::FontOptions(16.0f));
-        addAndMakeVisible(l);
-    };
-    setupValue(midValue);
-    setupValue(highValue);
-    setupValue(mixValue);
-    setupValue(outValue);
-
-    addAndMakeVisible(waveform);
-
-    updateLabels();
-    startTimerHz(30); // Actualiza los numeritos 30 veces por segundo
+    startTimerHz(15);
 }
 
 EC_AIRAudioProcessorEditor::~EC_AIRAudioProcessorEditor()
 {
     stopTimer();
-    setLookAndFeel(nullptr);
+}
+
+void EC_AIRAudioProcessorEditor::setupSlider(juce::Slider& slider, juce::Label& label, const juce::String& text)
+{
+    slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+    slider.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff00d4ff));
+    slider.setColour(juce::Slider::thumbColourId, juce::Colours::white);
+    addAndMakeVisible(slider);
+
+    label.setText(text, juce::dontSendNotification);
+    label.setFont(juce::Font(11.0f, juce::Font::bold));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xffcccccc));
+    label.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(label);
+}
+
+void EC_AIRAudioProcessorEditor::applyPreset(float mid, float high, float mix, float out)
+{
+    auto* midP = audioProcessor.apvts.getParameter("midAir");
+    auto* highP = audioProcessor.apvts.getParameter("highAir");
+    auto* mixP = audioProcessor.apvts.getParameter("mix");
+    auto* outP = audioProcessor.apvts.getParameter("output");
+    if (midP != nullptr) midP->setValueNotifyingHost(midP->convertTo0to1(mid));
+    if (highP != nullptr) highP->setValueNotifyingHost(highP->convertTo0to1(high));
+    if (mixP != nullptr) mixP->setValueNotifyingHost(mixP->convertTo0to1(mix));
+    if (outP != nullptr) outP->setValueNotifyingHost(outP->convertTo0to1(out));
 }
 
 void EC_AIRAudioProcessorEditor::timerCallback()
 {
-    updateLabels();
-
-    // Mantiene BYPASS sincronizado si mueves POWER a mano
-    auto* powerParam = audioProcessor.apvts.getRawParameterValue("power");
-    if (powerParam != nullptr)
-    {
-        bool isOn = *powerParam > 0.5f;
-        bypass.setToggleState(!isOn, juce::dontSendNotification);
-        bypass.setButtonText(!isOn ? "BYPASSED" : "BYPASS");
-        bypass.setColour(juce::TextButton::buttonColourId,
-                         !isOn ? juce::Colour(0xffffebee) : juce::Colour(0xffeef6fb));
-    }
-}
-
-void EC_AIRAudioProcessorEditor::updateLabels()
-{
     auto getVal = [this](const char* id) -> float
     {
         auto* v = audioProcessor.apvts.getRawParameterValue(id);
-        return v != nullptr ? *v : 0.0f;
+        return v != nullptr ? v->load() : 0.0f;
     };
 
-    // Aqui asumimos: midAir/highAir/output en dB, mix en 0-100
-    // Si en tu Processor son 0.0-1.0, cambialos abajo
     float mid = getVal("midAir");
     float high = getVal("highAir");
-    float mx = getVal("mix");
+    float mix = getVal("mix");
     float out = getVal("output");
 
-    // Si tus params son normalizados 0-1, descomenta estas 3 lineas:
-    // mid = mid * 12.0f; // 0 a +12dB
-    // high = high * 12.0f;
-    // out = (out * 24.0f) - 12.0f; // -12 a +12dB
+    valueLabel.setText("MID " + juce::String(mid, 1) + " dB  |  HIGH " + juce::String(high, 1) + " dB  |  MIX " + juce::String((int) mix) + "%  |  OUT " + juce::String(out, 1) + " dB", juce::dontSendNotification);
 
-    midValue.setText(juce::String(mid, 1) + " dB", juce::dontSendNotification);
-    highValue.setText(juce::String(high, 1) + " dB", juce::dontSendNotification);
-    mixValue.setText(juce::String((int)mx) + "%", juce::dontSendNotification);
-    outValue.setText(juce::String(out, 1) + " dB", juce::dontSendNotification);
-}
-
-void EC_AIRAudioProcessorEditor::applyPreset(int index)
-{
-    auto setParam = [this](const char* id, float value)
+    auto* powerParam = audioProcessor.apvts.getRawParameterValue("power");
+    if (powerParam != nullptr)
     {
-        auto* param = audioProcessor.apvts.getParameter(id);
-        if (param != nullptr)
-        {
-            // Convierte valor real a 0-1 segun el rango del param
-            auto range = param->getNormalisableRange();
-            param->setValueNotifyingHost(range.convertTo0to1(value));
-        }
-    };
-
-    // AJUSTA ESTOS VALORES A TUS RANGOS REALES
-    // Formato: midAir dB, highAir dB, mix %, output dB
-    switch (index)
-    {
-        case 1: // Warm & Airy
-            setParam("midAir", 2.4f); setParam("highAir", 4.1f);
-            setParam("mix", 65.0f); setParam("output", -0.5f);
-            break;
-        case 2: // Bright Vocals
-            setParam("midAir", 3.5f); setParam("highAir", 6.0f);
-            setParam("mix", 75.0f); setParam("output", -1.0f);
-            break;
-        case 3: // Master Sparkle
-            setParam("midAir", 1.5f); setParam("highAir", 2.8f);
-            setParam("mix", 45.0f); setParam("output", -0.2f);
-            break;
-        case 4: // Subtle Air
-            setParam("midAir", 0.8f); setParam("highAir", 1.2f);
-            setParam("mix", 30.0f); setParam("output", 0.0f);
-            break;
-        default: break;
+        bool isOn = powerParam->load() > 0.5f;
+        midAirSlider.setEnabled(isOn);
+        highAirSlider.setEnabled(isOn);
+        mixSlider.setEnabled(isOn);
+        outputSlider.setEnabled(isOn);
     }
-    // Asegura que POWER quede prendido al cambiar preset
-    auto* powerParam = audioProcessor.apvts.getParameter("power");
-    if (powerParam != nullptr) powerParam->setValueNotifyingHost(1.0f);
-    updateLabels();
 }
 
 void EC_AIRAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    juce::ColourGradient bg(juce::Colour(0xffffffff), 0, 0,
-                            juce::Colour(0xffdbeefb), 0, (float)getHeight(), false);
-    g.setGradientFill(bg);
-    g.fillAll();
-    g.setColour(juce::Colour(0xffb0d4ea));
-    g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1), 18.0f, 1.0f);
-
-    g.setColour(juce::Colour(0xff2a7ab5));
-    g.setFont(juce::FontOptions(24.0f, juce::Font::bold));
-    g.drawText("EC AUDIO", 40, 20, 200, 30, juce::Justification::left);
-
-    g.setColour(juce::Colour(0xff2a7ab5));
-    g.setFont(juce::FontOptions(42.0f, juce::Font::bold));
-    g.drawText("EC AIR EXCITER", 0, 70, getWidth(), 50, juce::Justification::centred);
-
-    g.setColour(juce::Colour(0xff78909c));
-    g.setFont(juce::FontOptions(18.0f));
-    g.drawText("HARMONIC EXCITER — ADD AIR & CLARITY", 0, 118, getWidth(), 25, juce::Justification::centred);
-
-    g.setColour(juce::Colour(0xfff2f8fc));
-    g.fillRoundedRectangle(40, 400, getWidth() - 80, 90, 12.0f);
-    g.setColour(juce::Colour(0xffcfe8f5));
-    g.drawRoundedRectangle(juce::Rectangle<float>(40, 400, getWidth() - 80, 90), 12.0f, 1.0f);
-
-    g.setColour(juce::Colour(0xff78909c));
-    g.setFont(juce::FontOptions(13.0f));
-    g.drawText("POWER", 140, 428, 70, 20, juce::Justification::right);
-    g.drawText("INPUT", 40, 540, 100, 20, juce::Justification::left);
-    g.drawText("OUTPUT", getWidth() - 140, 540, 100, 20, juce::Justification::right);
-    g.drawText("VERSION 1.0  •  48kHz  •  STEREO", 40, 565, 300, 20, juce::Justification::left);
-    g.drawText("SAFE  •  OVERSAMPLE 2x", getWidth() - 340, 565, 300, 20, juce::Justification::right);
+    g.fillAll(juce::Colour(0xff111111));
+    g.setColour(juce::Colour(0xff00d4ff));
+    g.drawLine(0, 48, (float) getWidth(), 48, 1.0f);
 }
 
 void EC_AIRAudioProcessorEditor::resized()
 {
-    midAir.setBounds(120, 165, 200, 200);
-    highAir.setBounds(480, 165, 200, 200);
-    midLabel.setBounds(120, 365, 200, 30);
-    highLabel.setBounds(480, 365, 200, 30);
-    midValue.setBounds(120, 395, 200, 20);
-    highValue.setBounds(480, 395, 200, 20);
+    auto area = getLocalBounds();
+    titleLabel.setBounds(area.removeFromTop(48));
+    auto bottom = area.removeFromBottom(52);
+    valueLabel.setBounds(bottom.removeFromTop(24));
+    auto presetRow = bottom.removeFromBottom(28);
+    presetAirButton.setBounds(presetRow.removeFromLeft(90).reduced(4));
+    presetVocalButton.setBounds(presetRow.removeFromLeft(90).reduced(4));
+    presetMasterButton.setBounds(presetRow.removeFromLeft(90).reduced(4));
+    powerButton.setBounds(presetRow.removeFromRight(110).reduced(4));
 
-    presetBox.setBounds(540, 22, 200, 26);
-
-    power.setBounds(215, 428, 55, 28);
-    bypass.setBounds(285, 428, 80, 28);
-    mix.setBounds(400, 415, 65, 65);
-    output.setBounds(560, 415, 65, 65);
-    mixLabel.setBounds(400, 398, 65, 20);
-    outLabel.setBounds(560, 398, 65, 20);
-    mixValue.setBounds(400, 478, 65, 18);
-    outValue.setBounds(560, 478, 65, 18);
-
-    waveform.setBounds(40, 500, getWidth() - 80, 38);
+    auto knobs = area.reduced(10);
+    int w = knobs.getWidth() / 4;
+    auto placeKnob = [&](juce::Slider& s, juce::Label& l, int x)
+    {
+        s.setBounds(x, knobs.getY() + 10, w - 10, 150);
+        l.setBounds(x, knobs.getY() + 160, w - 10, 20);
+    };
+    placeKnob(midAirSlider, midAirLabel, knobs.getX());
+    placeKnob(highAirSlider, highAirLabel, knobs.getX() + w);
+    placeKnob(mixSlider, mixLabel, knobs.getX() + w * 2);
+    placeKnob(outputSlider, outputLabel, knobs.getX() + w * 3);
 }
