@@ -136,3 +136,10 @@ void EC_AIRAudioProcessor::setStateInformation(const void* data, int sizeInBytes
     if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
+
+//==============================================================================
+// ESTO ERA LO QUE FALTABA - Sin esto el linker falla en VST3, AU y Standalone
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new EC_AIRAudioProcessor();
+}
