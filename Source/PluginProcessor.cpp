@@ -1,7 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-//==============================================================================
 EC_AIRAudioProcessor::EC_AIRAudioProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
                                      .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
@@ -19,7 +18,6 @@ EC_AIRAudioProcessor::~EC_AIRAudioProcessor() {}
 juce::AudioProcessorValueTreeState::ParameterLayout EC_AIRAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
-    // Rangos REALES - estos son los que usa el Editor para presets y labels
     params.push_back(std::make_unique<juce::AudioParameterFloat>("midAir", "Mid Air", 0.0f, 12.0f, 2.4f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>("highAir", "High Air", 0.0f, 12.0f, 4.1f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>("mix", "Mix", 0.0f, 100.0f, 65.0f));
@@ -32,7 +30,7 @@ void EC_AIRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     juce::dsp::ProcessSpec spec;
     spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = (juce::uint32)samplesPerBlock;
+    spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
     spec.numChannels = 2;
 
     for (int ch = 0; ch < 2; ++ch)
@@ -42,7 +40,6 @@ void EC_AIRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         midShelf[ch].prepare(spec);
         highShelf[ch].prepare(spec);
 
-        // Mid Air ~ 6kHz, High Air ~ 12kHz
         *midHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 6000.0);
         *highHighPass[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 12000.0);
         *midShelf[ch].coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(sampleRate, 6000.0, 0.7f, 1.0f);
@@ -64,7 +61,6 @@ bool EC_AIRAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
 
 float EC_AIRAudioProcessor::excite(float x, float amount)
 {
-    // Saturacion suave tipo exciter
     float driven = x * (1.0f + amount * 0.5f);
     return std::tanh(driven);
 }
@@ -77,16 +73,14 @@ void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // POWER / BYPASS - si esta apagado, sale limpio
-    if (powerParam == nullptr || *powerParam < 0.5f)
+    if (powerParam == nullptr || powerParam->load() < 0.5f)
         return;
 
-    float midAmount = midAirParam ? *midAirParam : 0.0f;
-    float highAmount = highAirParam ? *highAirParam : 0.0f;
-    float mix = mixParam ? (*mixParam / 100.0f) : 0.65f;
-    float outGain = outputParam ? juce::Decibels::decibelsToGain(*outputParam) : 1.0f;
+    float midAmount = midAirParam != nullptr ? midAirParam->load() : 0.0f;
+    float highAmount = highAirParam != nullptr ? highAirParam->load() : 0.0f;
+    float mix = mixParam != nullptr ? (mixParam->load() / 100.0f) : 0.65f;
+    float outGain = outputParam != nullptr ? juce::Decibels::decibelsToGain(outputParam->load()) : 1.0f;
 
-    // Actualiza shelves con el valor actual de los knobs
     double sr = getSampleRate();
     for (int ch = 0; ch < 2; ++ch)
     {
@@ -97,15 +91,14 @@ void EC_AIRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     for (int ch = 0; ch < totalNumInputChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(ch);
+        int chIdx = juce::jmin(ch, 1);
         for (int s = 0; s < buffer.getNumSamples(); ++s)
         {
             float dry = data[s];
-            float mid = midHighPass[ch].processSample(dry);
-            float high = highHighPass[ch].processSample(dry);
+            float mid = midHighPass[chIdx].processSample(dry);
+            float high = highHighPass[chIdx].processSample(dry);
             float excited = excite(mid, midAmount * 0.15f) + excite(high, highAmount * 0.15f);
-            // Resetea los highpass para la siguiente muestra? No, IIR ya avanza solo.
-            // Para no duplicar proceso, usamos shelves para el brillo final:
-            float air = midShelf[ch].processSample(dry) + highShelf[ch].processSample(dry) - dry * 2.0f;
+            float air = midShelf[chIdx].processSample(dry) + highShelf[chIdx].processSample(dry) - dry * 2.0f;
             float wet = dry + excited * 0.3f + air * 0.2f;
             float mixed = dry * (1.0f - mix) + wet * mix;
             data[s] = mixed * outGain;
