@@ -2,7 +2,6 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-// Look & Feel propio para que los knobs se vean pro, no como los de JUCE por default
 class AirLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
