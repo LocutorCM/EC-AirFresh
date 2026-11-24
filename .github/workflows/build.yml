@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-15-intel
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,7 @@ jobs:
           xcrun --show-sdk-path
           uname -m
 
-      - name: Configure CMake - macOS 15 Intel Only
+      - name: Configure CMake - macOS 14 Intel Only
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
