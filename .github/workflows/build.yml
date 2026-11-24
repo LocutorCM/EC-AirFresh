@@ -4,7 +4,6 @@ concurrency:
   group: build-macos
   cancel-in-progress: true
 
-
 on:
   push:
     branches: [ main ]
@@ -71,6 +70,39 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      # ===== LO NUEVO EMPIEZA AQUI - SOLO AGREGUE ESTO =====
+
+      - name: Create ZIP
+        run: |
+          mkdir -p dist-zip
+          cp -R build/EC_AIR_artefacts/Release/VST3/*.vst3 dist-zip/ 2>/dev/null || echo "No VST3"
+          cp -R build/EC_AIR_artefacts/Release/AU/*.component dist-zip/ 2>/dev/null || echo "No AU"
+          cp -R build/EC_AIR_artefacts/Release/Standalone/*.app dist-zip/ 2>/dev/null || echo "No Standalone"
+          ls -R dist-zip
+          cd dist-zip && zip -r ../EC-AIR-Plugins.zip . && cd ..
+
+      - name: Create PKG Installer
+        run: |
+          # Estructura EXACTA como debe quedar en tu Mac
+          mkdir -p staging/Library/Audio/Plug-Ins/VST3
+          mkdir -p staging/Library/Audio/Plug-Ins/Components
+          mkdir -p staging/Applications
+
+          cp -R build/EC_AIR_artefacts/Release/VST3/*.vst3 staging/Library/Audio/Plug-Ins/VST3/ 2>/dev/null || echo "No VST3"
+          cp -R build/EC_AIR_artefacts/Release/AU/*.component staging/Library/Audio/Plug-Ins/Components/ 2>/dev/null || echo "No AU"
+          cp -R build/EC_AIR_artefacts/Release/Standalone/*.app staging/Applications/ 2>/dev/null || echo "No Standalone"
+
+          ls -R staging
+
+          # install-location / = respeta la estructura de staging
+          pkgbuild --root staging \
+                   --identifier com.ecaudio.airexciter \
+                   --version 1.0.0 \
+                   --install-location / \
+                   EC-AIR-Installer.pkg
+
+          ls -lh EC-AIR-Installer.pkg EC-AIR-Plugins.zip
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -79,4 +111,18 @@ jobs:
             build/EC_AIR_artefacts/Release/VST3/*.vst3
             build/EC_AIR_artefacts/Release/AU/*.component
             build/EC_AIR_artefacts/Release/Standalone/*.app
+          if-no-files-found: warn
+
+      - name: Upload PKG
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC-AIR-Installer-pkg
+          path: EC-AIR-Installer.pkg
+          if-no-files-found: warn
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: EC-AIR-Plugins-zip
+          path: EC-AIR-Plugins.zip
           if-no-files-found: warn
