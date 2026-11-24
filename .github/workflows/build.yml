@@ -11,38 +11,48 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-15-intel
+    runs-on: macos-15
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Show repo structure
+      - name: Fix JUCE - Use 8.0.8 and Patch CGWindowListCreateImage
         run: |
-          pwd
-          ls -la
-          echo "--- FIND JUCE ---"
-          find . -maxdepth 3 -iname "*juce*" -print
-          cat CMakeLists.txt | head -n 100
-
-      - name: Fix JUCE to 8.0.8 - macOS 15 fix
-        run: |
-          # Busca donde esta JUCE
-          JUCE_DIR=$(find . -maxdepth 3 -type d -iname "juce" | head -n 1)
-          echo "JUCE_DIR found: $JUCE_DIR"
-
-          if [ -z "$JUCE_DIR" ]; then
-            echo "No se encontro carpeta JUCE, clonando JUCE 8.0.8..."
-            git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
-          else
-            echo "Actualizando $JUCE_DIR a 8.0.8..."
-            cd "$JUCE_DIR"
+          # 1. Asegurar JUCE 8.0.8 local
+          if [ -d "JUCE/.git" ]; then
+            cd JUCE
             git fetch --tags
             git checkout 8.0.8
-            git log --oneline -1
-            cd -
+            cd ..
+          elif [ -d "juce/.git" ]; then
+            cd juce
+            git fetch --tags
+            git checkout 8.0.8
+            cd ..
+          else
+            echo "Clonando JUCE 8.0.8 limpio..."
+            rm -rf JUCE
+            git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
           fi
+
+          echo "JUCE listo en: $(pwd)/JUCE"
+          ls JUCE/modules/juce_gui_basics/ | head
+
+          # 2. Parchar CUALQUIER juce_Windowing_mac.mm que exista
+          # Reemplaza la llamada obsoleta por nullptr, asi compila en SDK 15
+          find . -name "juce_Windowing_mac.mm" -print -exec python3 -c "
+          import sys, re, pathlib
+          p = pathlib.Path(sys.argv[1])
+          txt = p.read_text()
+          # Reemplaza CGWindowListCreateImage(...) por nullptr
+          # Caso tipico: CGImageRef img = CGWindowListCreateImage(...);
+          new_txt, n = re.subn(r'CGWindowListCreateImage\s*\([^;]*?\)', 'nullptr', txt, flags=re.DOTALL)
+          print(f'Parcheado {p}: {n} reemplazos')
+          if n > 0:
+              p.write_text(new_txt)
+          " {} \;
 
       - name: Show available Xcodes
         run: |
@@ -51,12 +61,17 @@ jobs:
           uname -m
 
       - name: Configure CMake - macOS 15 Intel Only
+        env:
+          # Obliga a FetchContent a usar nuestro JUCE ya parcheado, no a bajar el viejo
+          FETCHCONTENT_SOURCE_DIR_JUCE: ${{ github.workspace }}/JUCE
+          FETCHCONTENT_SOURCE_DIR_JUCE-EXTRAS: ${{ github.workspace }}/JUCE
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64"
+            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+            -DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/JUCE
 
       - name: Build
         run: cmake --build build --config Release --parallel
