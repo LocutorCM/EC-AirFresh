@@ -18,7 +18,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Fix JUCE - Use 8.0.8 and Patch CGWindowListCreateImage
+      - name: Fix JUCE - Use 8.0.8
         run: |
           if [ -d "JUCE/.git" ]; then
             cd JUCE
@@ -36,39 +36,19 @@ jobs:
             git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
           fi
 
-          cat > /tmp/patch.py << 'PYEOF'
-          import pathlib
+          # Verificar que el archivo NO esta roto por un parche anterior
+          echo "--- Verificando juce_Windowing_mac.mm ---"
+          grep -n "CGWindowListCreateImage\|windowNumber" JUCE/modules/juce_gui_basics/native/juce_Windowing_mac.mm | head -20
+          # Si aparece "nullptr [nsWindow" es que el parche malo lo rompio
+          if grep -q "nullptr \[nsWindow" JUCE/modules/juce_gui_basics/native/juce_Windowing_mac.mm; then
+            echo "ERROR: Archivo corrupto por parche anterior, restaurando..."
+            cd JUCE && git checkout -- modules/juce_gui_basics/native/juce_Windowing_mac.mm && cd ..
+          fi
+          echo "Archivo OK"
 
-          for p in pathlib.Path('.').rglob('juce_Windowing_mac.mm'):
-              txt = p.read_text()
-              needle = 'CGWindowListCreateImage'
-              count = 0
-              while needle in txt:
-                  idx = txt.find(needle)
-                  paren = txt.find('(', idx)
-                  if paren == -1:
-                      break
-                  depth = 0
-                  i = paren
-                  while i < len(txt):
-                      if txt[i] == '(':
-                          depth += 1
-                      elif txt[i] == ')':
-                          depth -= 1
-                          if depth == 0:
-                              break
-                      i += 1
-                  if depth != 0:
-                      print('No se pudo balancear parentesis')
-                      break
-                  txt = txt[:idx] + 'nullptr' + txt[i + 1:]
-                  count += 1
-              print(f'Parcheado {p}: {count} reemplazos')
-              if count > 0:
-                  p.write_text(txt)
-          PYEOF
-
-          python3 /tmp/patch.py
+          # NO parcheamos CGWindowListCreateImage.
+          # En JUCE 8.0.8 ya esta corregido para Xcode 16 / macOS 15.
+          # El parche anterior que lo cambiaba por 'nullptr' era el que rompia la compilacion.
 
       - name: Show available Xcodes
         run: |
@@ -83,7 +63,7 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
             -DCMAKE_OSX_ARCHITECTURES="x86_64" \
             -DFETCHCONTENT_SOURCE_DIR_JUCE=${{ github.workspace }}/JUCE
 
