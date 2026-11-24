@@ -18,9 +18,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Use Xcode 14.2 - SDK 13.1
+      - name: List available Xcodes
+        run: ls /Applications/ | grep Xcode
+
+      - name: Use Xcode 15.4 - SDK 14.5
         run: |
-          sudo xcode-select -s /Applications/Xcode_14.2.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
           xcodebuild -version
           xcrun --show-sdk-path
 
@@ -30,8 +33,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64" \
-            -DCMAKE_OSX_SYSROOT=/Applications/Xcode_14.2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX13.1.sdk
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_SYSROOT=/Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk
 
       - name: Build
         run: cmake --build build --config Release --parallel
