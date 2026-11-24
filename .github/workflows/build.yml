@@ -3,7 +3,7 @@ name: Build
 concurrency:
   group: build-macos
   cancel-in-progress: true
-
+  
 on:
   push:
     branches: [ main ]
