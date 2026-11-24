@@ -1,31 +1,72 @@
-name: Build EC-AIR-EXCITER
+name: Build
+
+concurrency:
+  group: build-macos
+  cancel-in-progress: true
 
 on:
   push:
-  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  macos:
+  build-macos:
     runs-on: macos-15-intel
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build (AU + VST3, universal arm64/x86_64)
-        run: cmake --build build --config Release -j 4
-
-      - name: EC-AIR-EXCITER-macOS-INTEL
+      - name: Show repo structure
         run: |
-          mkdir -p dist out
-          find build -maxdepth 6 \( -name "*.vst3" -o -name "*.component" \) -exec cp -R {} dist/ \;
-          for f in dist/*; do codesign --force --deep -s - "$f"; done
-          cd dist
-          for f in *; do ditto -c -k --keepParent "$f" "../out/$f.zip"; done
+          pwd
+          ls -la
+          echo "--- FIND JUCE ---"
+          find . -maxdepth 3 -iname "*juce*" -print
+          cat CMakeLists.txt | head -n 100
 
-      - uses: actions/upload-artifact@v4
+      - name: Fix JUCE to 8.0.8 - macOS 15 fix
+        run: |
+          # Busca donde esta JUCE
+          JUCE_DIR=$(find . -maxdepth 3 -type d -iname "juce" | head -n 1)
+          echo "JUCE_DIR found: $JUCE_DIR"
+
+          if [ -z "$JUCE_DIR" ]; then
+            echo "No se encontro carpeta JUCE, clonando JUCE 8.0.8..."
+            git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE.git JUCE
+          else
+            echo "Actualizando $JUCE_DIR a 8.0.8..."
+            cd "$JUCE_DIR"
+            git fetch --tags
+            git checkout 8.0.8
+            git log --oneline -1
+            cd -
+          fi
+
+      - name: Show available Xcodes
+        run: |
+          xcodebuild -version
+          xcrun --show-sdk-path
+          uname -m
+
+      - name: Configure CMake - macOS 15 Intel Only
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: EC-AIR-EXCITER-macOS-INTEL
-          path: out/*.zip
+          path: |
+            build/EC_AIR_artefacts/Release/VST3/*.vst3
+            build/EC_AIR_artefacts/Release/AU/*.component
+            build/EC_AIR_artefacts/Release/Standalone/*.app
+          if-no-files-found: warn
